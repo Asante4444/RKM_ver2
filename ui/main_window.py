@@ -1,7 +1,11 @@
-# ==================== ui/main_window.py (COMPLETE WORKING VERSION) ====================
-"""Main application window - Fixed and working."""
+# ==================== ui/main_window.py (COMPLETE WITH RENAME) ====================
+"""Main application window - with character-based file renaming."""
 import sys
 import os
+import sqlite3
+import re
+import shutil
+from datetime import datetime
 
 # Add project root to Python path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -30,6 +34,7 @@ from ui.widgets.replay_table import ReplayTable
 from ui.widgets.search_bar import SearchBar
 from ui.themes import ThemeManager
 from ui.dialogs.settings_dialogs import ControlsDialog, AppearanceDialog
+from ui.dialogs.rename_character_dialog import RenameCharacterDialog
 
 from ui.dialogs.filter_dialogs import TagFilterDialog, RecordedFilterDialog
 from ui.dialogs.edit_dialog import EditReplayDialog
@@ -297,9 +302,6 @@ class MainWindow(QWidget):
             QMessageBox.warning(self, "No Database", "No active database to backup.")
             return
         
-        import shutil
-        from datetime import datetime
-        
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         base_name = os.path.splitext(os.path.basename(self.database.db_path))[0]
         backup_name = f"{base_name}_{timestamp}.db"
@@ -323,7 +325,6 @@ class MainWindow(QWidget):
         if not path:
             return
         
-        import shutil
         db_name = os.path.basename(path)
         dest_path = os.path.join(ACTIVE_DB_FOLDER, db_name)
         
@@ -400,6 +401,10 @@ class MainWindow(QWidget):
             self.load_replays()
         elif action == 'about':
             self._show_about_dialog()
+        elif action == 'set_rename_character':
+            self.set_rename_character()
+        elif action == 'rename_files':
+            self.rename_selected_files()
     
     def _export_to_csv(self):
         """Export selected rows to CSV."""
@@ -424,10 +429,212 @@ class MainWindow(QWidget):
             <li>Database management with backup/restore</li>
             <li>Tag-based filtering and organization</li>
             <li>Character portrait and quote rotation</li>
+            <li>Character-based file renaming</li>
             <li>Dark/Light theme support</li>
         </ul>
         """
         QMessageBox.about(self, "About", about_text)
+    
+    # ==================== FILE RENAMING FUNCTIONALITY ====================
+    
+    def set_rename_character(self):
+        """Show dialog to set the character name for file renaming."""
+        current_character = self.preferences.get_rename_character()
+        
+        dialog = RenameCharacterDialog(current_character, self)
+        
+        if dialog.exec():
+            new_character = dialog.get_character()
+            self.preferences.set_rename_character(new_character)
+            
+            if new_character:
+                QMessageBox.information(
+                    self,
+                    "Character Set",
+                    f"Rename character set to: {new_character}\n\n"
+                    f"Files will be renamed using this character."
+                )
+            else:
+                QMessageBox.information(
+                    self,
+                    "Character Cleared",
+                    "Rename character has been cleared."
+                )
+    
+    def rename_selected_files(self):
+        """Rename selected replay files using the preset character."""
+        # Check if we have a database
+        if not self.database:
+            QMessageBox.warning(
+                self,
+                "No Database",
+                "Please select or create a database first."
+            )
+            return
+        
+        # Get selected rows
+        selection_model = self.table.selectionModel()
+        if not selection_model:
+            return
+        
+        selected_rows = selection_model.selectedRows()
+        if not selected_rows:
+            QMessageBox.warning(
+                self,
+                "No Selection",
+                "Please select entries to rename files."
+            )
+            return
+        
+        # Check if rename character is set
+        rename_character = self.preferences.get_rename_character()
+        if not rename_character:
+            reply = QMessageBox.question(
+                self,
+                "No Rename Character",
+                "No rename character is set. Would you like to set one now?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self.set_rename_character()
+                rename_character = self.preferences.get_rename_character()
+                if not rename_character:
+                    return
+            else:
+                return
+        
+        # Select files to rename
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Select Files to Rename (in order of selected entries)",
+            "",
+            "Video Files (*.mp4 *.avi *.mkv *.mov);;All Files (*.*)"
+        )
+        
+        if not file_paths:
+            return
+        
+        # Get database code
+        db_code = self._get_database_code()
+        
+        # Sanitize character name
+        safe_character = self._sanitize_character_name(rename_character)
+        
+        # Process each selected row
+        renamed_count = 0
+        failed_renames = []
+        
+        for idx, proxy_index in enumerate(selected_rows):
+            # Get source model index
+            source_index = self.table.proxy_model.mapToSource(proxy_index)
+            row = source_index.row()
+            
+            # Get UFC code from the row
+            ufc_item = self.table._model.item(row, 2)
+            if not ufc_item:
+                continue
+            
+            ufc = ufc_item.text()
+            
+            # Get corresponding file (cycle through files if more rows than files)
+            file_idx = idx % len(file_paths)
+            original_path = file_paths[file_idx]
+            
+            if not os.path.exists(original_path):
+                failed_renames.append((ufc, "File not found"))
+                continue
+            
+            # Generate new filename
+            new_path = self._generate_renamed_path(
+                original_path,
+                safe_character,
+                ufc,
+                db_code
+            )
+            
+            try:
+                # Rename the file
+                shutil.move(original_path, new_path)
+                
+                # Update database with new filename
+                new_filename = os.path.basename(new_path)
+                self.database.update_replay(ufc, renamed_filename=new_filename)
+                
+                renamed_count += 1
+                
+            except Exception as e:
+                failed_renames.append((ufc, str(e)))
+        
+        # Show results
+        message = f"Successfully renamed {renamed_count} file(s) using character: {rename_character}"
+        if failed_renames:
+            message += f"\n\nFailed to rename {len(failed_renames)} file(s):"
+            for ufc, error in failed_renames[:5]:  # Show first 5 errors
+                message += f"\n  {ufc}: {error}"
+            if len(failed_renames) > 5:
+                message += f"\n  ... and {len(failed_renames) - 5} more"
+        
+        QMessageBox.information(self, "Rename Complete", message)
+        
+        # Reload table
+        self.load_replays()
+    
+    def _get_database_code(self) -> str:
+        """Get the unique database code (UDC)."""
+        if not self.database:
+            return "UNKNOWN"
+        
+        try:
+            with sqlite3.connect(self.database.db_path) as conn:
+                c = conn.cursor()
+                c.execute("SELECT unique_db_code FROM db_info LIMIT 1")
+                row = c.fetchone()
+                if row:
+                    return row[0]
+                else:
+                    # Generate and save a new UDC if it doesn't exist
+                    import uuid
+                    new_udc = str(uuid.uuid4())[:8].upper()
+                    c.execute("INSERT INTO db_info (unique_db_code) VALUES (?)", (new_udc,))
+                    conn.commit()
+                    return new_udc
+        except Exception as e:
+            print(f"Error getting database code: {e}")
+            return "UNKNOWN"
+    
+    def _sanitize_character_name(self, name: str) -> str:
+        """Sanitize character name for use in filenames."""
+        # Remove invalid filename characters
+        safe_name = re.sub(r'[\\/:\*\?\"<>\|]', '_', name)
+        # Convert to lowercase and replace spaces with hyphens
+        safe_name = safe_name.lower().replace(" ", "-")
+        # Remove multiple consecutive hyphens
+        safe_name = re.sub(r'-+', '-', safe_name)
+        # Strip leading/trailing hyphens
+        safe_name = safe_name.strip('-')
+        return safe_name
+    
+    def _generate_renamed_path(self, original_path: str, character: str, 
+                               ufc: str, db_code: str) -> str:
+        """Generate the new file path with the naming convention."""
+        directory = os.path.dirname(original_path)
+        extension = os.path.splitext(original_path)[1]
+        
+        # Generate timestamp
+        timestamp = datetime.now().strftime("%m-%d-%Y_%H-%M-%S")
+        
+        # Build new filename: character_UFC-XXXX_UDC-YYYY_MM-DD-YYYY_HH-MM-SS.ext
+        new_filename = f"{character}_{ufc}_UDC-{db_code}_{timestamp}{extension}"
+        new_path = os.path.join(directory, new_filename)
+        
+        # Handle duplicates
+        counter = 1
+        while os.path.exists(new_path):
+            new_filename = f"{character}_{ufc}_UDC-{db_code}_{timestamp}_{counter}{extension}"
+            new_path = os.path.join(directory, new_filename)
+            counter += 1
+        
+        return new_path
     
     # ==================== Settings Actions ====================
     
@@ -560,7 +767,7 @@ class MainWindow(QWidget):
             # Use 220x220 to match right panel
             pixmap = self.portrait_manager.load_portrait(
                 char_path,
-                QSize(220, 220)  # Reduced from 280
+                QSize(220, 220)
             )
             self.right_panel.update_character(char_name, pixmap)
         else:
@@ -597,19 +804,3 @@ class MainWindow(QWidget):
         
         char_name = random.choice(alt_chars)
         portraits = self.portrait_manager.get_character_portraits(char_name)
-        
-        if portraits:
-            portrait_path = random.choice(portraits)
-            # Use 200x200 to match center panel size
-            pixmap = self.portrait_manager.load_portrait(
-                portrait_path,
-                QSize(200, 200)  # Updated from 160
-            )
-            quote = self.quote_manager.get_random_quote(char_name)
-            self.center_panel.update_display(char_name, pixmap, quote)
-        else:
-            self.center_panel.update_display(
-                char_name, 
-                None, 
-                "No portrait available"
-            )

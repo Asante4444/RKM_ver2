@@ -17,7 +17,7 @@ class ControlsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Controls")
-        self.resize(400, 250)
+        self.resize(400, 400)
         self.init_ui()
     
     def init_ui(self):
@@ -67,6 +67,16 @@ class ControlsDialog(QDialog):
         # Utility Section
         utility_group = QGroupBox("Utility")
         utility_layout = QVBoxLayout(utility_group)
+        
+        # NEW: Rename character button
+        btn_set_rename_char = QPushButton("Set Rename Character")
+        btn_set_rename_char.clicked.connect(lambda: self.utility_action.emit('set_rename_character'))
+        utility_layout.addWidget(btn_set_rename_char)
+        
+        # NEW: Rename files button
+        btn_rename_files = QPushButton("Rename Selected Files")
+        btn_rename_files.clicked.connect(lambda: self.utility_action.emit('rename_files'))
+        utility_layout.addWidget(btn_rename_files)
         
         btn_export = QPushButton("Export to CSV")
         btn_export.clicked.connect(lambda: self.utility_action.emit('export'))

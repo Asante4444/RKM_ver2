@@ -14,7 +14,8 @@ class Preferences:
         'alt_characters': ['Dhalsim', 'Elena', 'Cammy'],
         'dark_mode': False,
         'active_db_path': None,
-        'character_name_override': None
+        'character_name_override': None,
+        'rename_character': None  # NEW: Character to use for file renaming
     }
     
     def __init__(self, prefs_file: str):
@@ -68,4 +69,13 @@ class Preferences:
     def set_alt_characters(self, characters: List[str]):
         """Set alt characters."""
         self.data['alt_characters'] = characters
+        self.save()
+    
+    def get_rename_character(self) -> Optional[str]:
+        """Get the character name to use for file renaming."""
+        return self.data.get('rename_character')
+    
+    def set_rename_character(self, character: Optional[str]):
+        """Set the character name to use for file renaming."""
+        self.data['rename_character'] = character
         self.save()
