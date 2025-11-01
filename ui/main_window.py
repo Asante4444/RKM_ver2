@@ -272,7 +272,7 @@ class MainWindow(QWidget):
         safe_char = safe_char.lower().replace(" ", "-")
         safe_char = re.sub(r'-+', '-', safe_char).strip('-')
         
-        # Generate UFC code
+        # Generate UFC code ONCE - will be used for both filename and database
         ufc = f"UFC-{str(uuid.uuid4())[:4].upper()}"
         
         # Get database code
@@ -297,12 +297,14 @@ class MainWindow(QWidget):
         file_name = f"{safe_char}_{ufc}_UDC-{db_code}_{timestamp}"
         
         try:
+            # Pass the UFC code to database so it uses the same one
             self.database.add_replay(
                 file_name=file_name,
                 timestamp=data.get('timestamp', ''),
                 video_link=data.get('video_link', ''),
                 description=data.get('description', ''),
-                tags=data.get('tags', '')
+                tags=data.get('tags', ''),
+                ufc=ufc  # Pass the UFC code we generated
             )
             
             self.left_panel.clear_inputs()
@@ -310,7 +312,7 @@ class MainWindow(QWidget):
             QMessageBox.information(
                 self, 
                 "Success", 
-                f"Replay added successfully!\n\nFile Name: {file_name}"
+                f"Replay added successfully!\n\nFile Name: {file_name}\nUFC: {ufc}"
             )
             
         except Exception as e:
@@ -475,7 +477,17 @@ class MainWindow(QWidget):
     
     def on_utility_action(self, action: str):
         """Handle utility menu actions."""
-        if action == 'export':
+        if action == 'open_folder':
+            self._open_replay_folder()
+        elif action == 'find_replace':
+            self._show_find_replace_dialog()
+        elif action == 'open_links':
+            self._open_selected_links()
+        elif action == 'delete_permanent':
+            self._delete_selected_permanent()
+        elif action == 'recycle_bin':
+            self._show_recycle_bin()
+        elif action == 'export':
             self._export_to_csv()
         elif action == 'refresh':
             self.load_replays()
@@ -511,9 +523,164 @@ class MainWindow(QWidget):
             <li>Character portrait and quote rotation</li>
             <li>Character-based file renaming</li>
             <li>Dark/Light theme support</li>
+            <li>Recycle bin for safe deletion</li>
+            <li>Find and replace in database</li>
         </ul>
         """
         QMessageBox.about(self, "About", about_text)
+    
+    def _open_replay_folder(self):
+        """Open the replay folder in file explorer."""
+        import subprocess
+        import platform
+        
+        replay_folder = REPLAY_FOLDER
+        
+        if not os.path.exists(replay_folder):
+            QMessageBox.warning(
+                self,
+                "Folder Not Found",
+                f"Replay folder not found:\n{replay_folder}"
+            )
+            return
+        
+        try:
+            if platform.system() == "Windows":
+                os.startfile(replay_folder)
+            elif platform.system() == "Darwin":  # macOS
+                subprocess.Popen(["open", replay_folder])
+            else:  # Linux
+                subprocess.Popen(["xdg-open", replay_folder])
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to open folder:\n{str(e)}"
+            )
+    
+    def _show_find_replace_dialog(self):
+        """Show find and replace dialog."""
+        if not self.database:
+            QMessageBox.warning(self, "No Database", "Please select a database first.")
+            return
+        
+        from ui.dialogs.utility_dialogs import FindReplaceDialog
+        dialog = FindReplaceDialog(self.database, self)
+        
+        if dialog.exec():
+            self.load_replays()
+    
+    def _open_selected_links(self):
+        """Open video links for selected replays."""
+        import webbrowser
+        
+        selection_model = self.table.selectionModel()
+        if not selection_model:
+            return
+        
+        selected_rows = selection_model.selectedRows()
+        if not selected_rows:
+            QMessageBox.warning(self, "No Selection", "Please select entries to open links.")
+            return
+        
+        links = []
+        for proxy_index in selected_rows:
+            source_index = self.table.proxy_model.mapToSource(proxy_index)
+            row = source_index.row()
+            
+            link_item = self.table._model.item(row, 4)  # Video Link column
+            if link_item:
+                link = link_item.text().strip()
+                if link:
+                    links.append(link)
+        
+        if not links:
+            QMessageBox.information(self, "No Links", "Selected entries have no video links.")
+            return
+        
+        reply = QMessageBox.question(
+            self,
+            "Open Links",
+            f"Open {len(links)} link(s) in your browser?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            for link in links:
+                try:
+                    # Check if it's a URL or local file path
+                    if link.startswith(('http://', 'https://', 'www.')):
+                        webbrowser.open(link)
+                    elif os.path.exists(link):
+                        # Open local file
+                        if os.name == 'nt':  # Windows
+                            os.startfile(link)
+                        else:
+                            webbrowser.open(f'file://{link}')
+                except Exception as e:
+                    print(f"Failed to open link {link}: {e}")
+    
+    def _delete_selected_permanent(self):
+        """Permanently delete selected replays (move to recycle bin first)."""
+        if not self.database:
+            QMessageBox.warning(self, "No Database", "Please select a database first.")
+            return
+        
+        selection_model = self.table.selectionModel()
+        if not selection_model:
+            return
+        
+        selected_rows = selection_model.selectedRows()
+        if not selected_rows:
+            QMessageBox.warning(self, "No Selection", "Please select entries to delete.")
+            return
+        
+        ufc_list = []
+        for proxy_index in selected_rows:
+            source_index = self.table.proxy_model.mapToSource(proxy_index)
+            row = source_index.row()
+            
+            ufc_item = self.table._model.item(row, 2)
+            if ufc_item:
+                ufc_list.append(ufc_item.text())
+        
+        reply = QMessageBox.warning(
+            self,
+            "Confirm Delete",
+            f"Move {len(ufc_list)} entry/entries to Recycle Bin?\n\n"
+            "They can be restored from the Recycle Bin within 30 days.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                for ufc in ufc_list:
+                    self.database.delete_replay(ufc, permanent=False)  # Move to recycle bin
+                
+                self.load_replays()
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"Moved {len(ufc_list)} entry/entries to Recycle Bin."
+                )
+            except Exception as e:
+                QMessageBox.critical(
+                    self,
+                    "Error",
+                    f"Failed to delete entries:\n{str(e)}"
+                )
+    
+    def _show_recycle_bin(self):
+        """Show recycle bin dialog."""
+        if not self.database:
+            QMessageBox.warning(self, "No Database", "Please select a database first.")
+            return
+        
+        from ui.dialogs.utility_dialogs import RecycleBinDialog
+        dialog = RecycleBinDialog(self.database, self)
+        
+        if dialog.exec():
+            self.load_replays()  # Refresh in case items were restored
     
     # ==================== FILE RENAMING FUNCTIONALITY ====================
     

@@ -12,7 +12,7 @@ class ReplayDatabase:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self._initialize_db()
-        self._migrate_db()  # NEW: Auto-migrate old databases
+        self._migrate_db()
     
     def _initialize_db(self):
         """Initialize database with required tables."""
@@ -92,9 +92,12 @@ class ReplayDatabase:
     
     def add_replay(self, file_name: str, timestamp: str = "", 
                    video_link: str = "", description: str = "",
-                   tags: str = "") -> str:
+                   tags: str = "", ufc: Optional[str] = None) -> str:
         """Add a new replay entry."""
-        ufc = self._generate_ufc(file_name)
+        # Use provided UFC or generate new one
+        if not ufc:
+            ufc = self._generate_ufc(file_name)
+        
         date_added = datetime.now().strftime("%m-%d-%Y %H:%M:%S")
         
         with sqlite3.connect(self.db_path) as conn:

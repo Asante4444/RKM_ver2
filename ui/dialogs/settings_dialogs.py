@@ -17,7 +17,7 @@ class ControlsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Controls")
-        self.resize(400, 400)
+        self.resize(400, 600)
         self.init_ui()
     
     def init_ui(self):
@@ -67,16 +67,49 @@ class ControlsDialog(QDialog):
         # Utility Section
         utility_group = QGroupBox("Utility")
         utility_layout = QVBoxLayout(utility_group)
+        utility_layout.setSpacing(8)
         
-        # NEW: Rename character button
+        # Open Replay Folder button
+        btn_open_folder = QPushButton("Open Replay Folder")
+        btn_open_folder.clicked.connect(lambda: self.utility_action.emit('open_folder'))
+        utility_layout.addWidget(btn_open_folder)
+        
+        # Find & Replace button
+        btn_find_replace = QPushButton("Find and Replace")
+        btn_find_replace.clicked.connect(lambda: self.utility_action.emit('find_replace'))
+        utility_layout.addWidget(btn_find_replace)
+        
+        # Open Selected Links button
+        btn_open_links = QPushButton("Open Selected Links")
+        btn_open_links.clicked.connect(lambda: self.utility_action.emit('open_links'))
+        utility_layout.addWidget(btn_open_links)
+        
+        # Delete Permanently button
+        btn_delete_perm = QPushButton("Delete Selected (to Recycle Bin)")
+        btn_delete_perm.setStyleSheet("QPushButton { background-color: #d32f2f; color: white; }")
+        btn_delete_perm.clicked.connect(lambda: self.utility_action.emit('delete_permanent'))
+        utility_layout.addWidget(btn_delete_perm)
+        
+        # Recycle Bin button
+        btn_recycle = QPushButton("View Recycle Bin")
+        btn_recycle.clicked.connect(lambda: self.utility_action.emit('recycle_bin'))
+        utility_layout.addWidget(btn_recycle)
+        
+        # Separator
+        utility_layout.addSpacing(10)
+        
+        # Rename character button
         btn_set_rename_char = QPushButton("Set Rename Character")
         btn_set_rename_char.clicked.connect(lambda: self.utility_action.emit('set_rename_character'))
         utility_layout.addWidget(btn_set_rename_char)
         
-        # NEW: Rename files button
+        # Rename files button
         btn_rename_files = QPushButton("Rename Selected Files")
         btn_rename_files.clicked.connect(lambda: self.utility_action.emit('rename_files'))
         utility_layout.addWidget(btn_rename_files)
+        
+        # Separator
+        utility_layout.addSpacing(10)
         
         btn_export = QPushButton("Export to CSV")
         btn_export.clicked.connect(lambda: self.utility_action.emit('export'))
