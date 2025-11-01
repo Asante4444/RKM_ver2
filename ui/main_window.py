@@ -1,4 +1,3 @@
-# ==================== ui/main_window.py (COMPLETE WITH RENAME) ====================
 """Main application window - with character-based file renaming."""
 import sys
 import os
@@ -14,7 +13,7 @@ if project_root not in sys.path:
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QMessageBox,
-    QFileDialog, QInputDialog, QApplication, QScrollArea
+    QFileDialog, QInputDialog, QApplication
 )
 from PyQt6.QtCore import Qt, QSize, QTimer
 from PyQt6.QtGui import QPixmap
@@ -50,12 +49,12 @@ class MainWindow(QWidget):
         self.resize(1400, 900)
         self.setMinimumSize(900, 600)
         
-        # Initialize core components with type hints for Pylance
+        # Initialize core components
         self.preferences: Preferences = Preferences(PREFERENCES_FILE)
         self.portrait_manager: PortraitManager = PortraitManager(CHAR_PORTRAIT_DIR, RANK_PORTRAIT_DIR)
         self.quote_manager: QuoteManager = QuoteManager(QUOTES_JSON)
         
-        # Initialize database (but don't show dialog yet)
+        # Initialize database
         self.database: Optional[ReplayDatabase] = None
         db_path = self.preferences.get('active_db_path')
         if db_path and os.path.exists(db_path):
@@ -111,10 +110,7 @@ class MainWindow(QWidget):
         if dialog.exec():
             selected_character = dialog.get_selected_character()
             if selected_character:
-                # Save to preferences
                 self.preferences.set('filename_character', selected_character)
-                
-                # Update left panel display
                 self.left_panel.set_filename_character(selected_character)
                 
                 QMessageBox.information(
@@ -126,7 +122,7 @@ class MainWindow(QWidget):
                 )
 
     def init_ui(self):
-        """Initialize the user interface with balanced proportions."""
+        """Initialize the user interface."""
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(10)
@@ -135,21 +131,17 @@ class MainWindow(QWidget):
         top_layout = QHBoxLayout()
         top_layout.setSpacing(30)
         
-        # Left Panel - UPDATED CONNECTIONS
+        # Left Panel
         self.left_panel = LeftPanel()
         self.left_panel.setMinimumWidth(300)
         self.left_panel.setMaximumWidth(420)
         self.left_panel.add_replay_requested.connect(self.on_add_replay)
         self.left_panel.tag_picker_clicked.connect(self.show_tag_picker)
-        self.left_panel.filename_character_picker_clicked.connect(self.show_filename_character_picker)  # NEW
-        self.left_panel.controls_clicked.connect(self.show_controls_dialog)
-        self.left_panel.appearance_clicked.connect(self.show_appearance_dialog)
-        # NEW: Connect popup dialogs
+        self.left_panel.filename_character_picker_clicked.connect(self.show_filename_character_picker)
         self.left_panel.controls_clicked.connect(self.show_controls_dialog)
         self.left_panel.appearance_clicked.connect(self.show_appearance_dialog)
         top_layout.addWidget(self.left_panel, alignment=Qt.AlignmentFlag.AlignTop)
         
-        # Spacer
         top_layout.addStretch(2)
         
         # Center Panel
@@ -159,7 +151,6 @@ class MainWindow(QWidget):
         self.center_panel.portrait_update_requested.connect(self.update_alt_character)
         top_layout.addWidget(self.center_panel, alignment=Qt.AlignmentFlag.AlignTop)
         
-        # Spacer
         top_layout.addStretch(1)
         
         # Right Panel
@@ -172,10 +163,8 @@ class MainWindow(QWidget):
         self.right_panel.quote_update_requested.connect(self.update_main_quote)
         top_layout.addWidget(self.right_panel, alignment=Qt.AlignmentFlag.AlignTop)
         
-        # Spacer
         top_layout.addStretch(2)
         
-        # Add top layout directly (no wrapper, no max height constraint)
         main_layout.addLayout(top_layout)
         
         # Search Bar
@@ -183,7 +172,7 @@ class MainWindow(QWidget):
         self.search_bar.search_changed.connect(self.on_search_changed)
         main_layout.addWidget(self.search_bar)
         
-        # Replay Table - gets remaining space
+        # Replay Table
         self.table = ReplayTable()
         self.table.setMinimumHeight(400)
         self.table.recorded_toggled.connect(self.on_recorded_toggled)
@@ -200,6 +189,55 @@ class MainWindow(QWidget):
         self.recycle_timer = QTimer(self)
         self.recycle_timer.timeout.connect(self.cleanup_recycle_bin)
         self.recycle_timer.start(RECYCLE_BIN_CHECK_INTERVAL)
+    
+    # ==================== Table/Replay Methods ====================
+    
+    def load_replays(self):
+        """Load replays from database into table."""
+        if not self.database:
+            return
+        
+        replays = self.database.get_all_replays()
+        self.table.load_replays(replays)
+    
+    def on_recorded_toggled(self, ufc: str, recorded: bool):
+        """Handle recorded checkbox toggle."""
+        if not self.database:
+            return
+        
+        try:
+            self.database.update_replay(ufc, recorded=1 if recorded else 0)
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Database Error",
+                f"Failed to update recorded status:\n{str(e)}"
+            )
+    
+    def on_row_double_clicked(self, row: int, replay_data: dict):
+        """Handle double-click on table row to edit."""
+        if not self.database:
+            return
+        
+        dialog = EditReplayDialog(replay_data, self.database, self)
+        
+        if dialog.exec():
+            self.load_replays()
+            QMessageBox.information(
+                self,
+                "Success",
+                "Replay updated successfully!"
+            )
+    
+    def cleanup_recycle_bin(self):
+        """Cleanup old entries from recycle bin."""
+        if not self.database:
+            return
+        
+        try:
+            self.database.auto_cleanup_recycle_bin(days=30)
+        except Exception as e:
+            print(f"Failed to cleanup recycle bin: {e}")
     
     # ==================== Database Operations ====================
     
@@ -220,16 +258,14 @@ class MainWindow(QWidget):
             )
             if reply == QMessageBox.StandardButton.Yes:
                 self.show_filename_character_picker()
-                # Check again after dialog
                 filename_character = self.preferences.get('filename_character')
                 if not filename_character:
-                    return  # User cancelled
+                    return
             else:
                 return
         
         # Generate the systematic filename
-        import re
-        from datetime import datetime
+        import uuid
         
         # Sanitize character name
         safe_char = re.sub(r'[\\/:\*\?\"<>\|]', '_', filename_character)
@@ -237,18 +273,18 @@ class MainWindow(QWidget):
         safe_char = re.sub(r'-+', '-', safe_char).strip('-')
         
         # Generate UFC code
-        ufc = f"UFC-{str(__import__('uuid').uuid4())[:4].upper()}"
+        ufc = f"UFC-{str(uuid.uuid4())[:4].upper()}"
         
         # Get database code
         try:
-            with __import__('sqlite3').connect(self.database.db_path) as conn:
+            with sqlite3.connect(self.database.db_path) as conn:
                 c = conn.cursor()
                 c.execute("SELECT unique_db_code FROM db_info LIMIT 1")
                 row = c.fetchone()
                 if row:
                     db_code = row[0]
                 else:
-                    db_code = str(__import__('uuid').uuid4())[:8].upper()
+                    db_code = str(uuid.uuid4())[:8].upper()
                     c.execute("INSERT INTO db_info (unique_db_code) VALUES (?)", (db_code,))
                     conn.commit()
         except:
@@ -320,7 +356,7 @@ class MainWindow(QWidget):
             db_path = os.path.join(ACTIVE_DB_FOLDER, db_name)
             self.database = ReplayDatabase(db_path)
             self.preferences.set('active_db_path', db_path)
-            if hasattr(self, 'left_panel'):  # Check if UI is initialized
+            if hasattr(self, 'left_panel'):
                 self.left_panel.set_active_db(db_name)
             self.load_replays()
     
@@ -410,11 +446,9 @@ class MainWindow(QWidget):
             self.current_tag_filter = dialog.get_selected_tags()
             self.use_and_logic = dialog.get_use_and_logic()
             
-            # Store the logic in the table's proxy model
             if hasattr(self.table, 'proxy_model'):
                 self.table.proxy_model.use_and_logic = self.use_and_logic
             
-            # Apply tag filter
             self.table.apply_filters(
                 search_text=self.search_bar.get_text(),
                 tags=self.current_tag_filter
@@ -498,43 +532,24 @@ class MainWindow(QWidget):
                     self,
                     "Character Set",
                     f"Rename character set to: {new_character}\n\n"
-                    f"Files will be renamed using this character.\n"
-                    f"New replays will show this in the filename preview."
-                )
-            else:
-                QMessageBox.information(
-                    self,
-                    "Character Cleared",
-                    "Rename character has been cleared.\n"
-                    "Please set one before adding replays."
+                    "Files will be renamed using this character."
                 )
     
     def rename_selected_files(self):
         """Rename selected replay files using the preset character."""
-        # Check if we have a database
         if not self.database:
-            QMessageBox.warning(
-                self,
-                "No Database",
-                "Please select or create a database first."
-            )
+            QMessageBox.warning(self, "No Database", "Please select or create a database first.")
             return
         
-        # Get selected rows
         selection_model = self.table.selectionModel()
         if not selection_model:
             return
         
         selected_rows = selection_model.selectedRows()
         if not selected_rows:
-            QMessageBox.warning(
-                self,
-                "No Selection",
-                "Please select entries to rename files."
-            )
+            QMessageBox.warning(self, "No Selection", "Please select entries to rename files.")
             return
         
-        # Check if rename character is set
         rename_character = self.preferences.get_rename_character()
         if not rename_character:
             reply = QMessageBox.question(
@@ -551,7 +566,6 @@ class MainWindow(QWidget):
             else:
                 return
         
-        # Select files to rename
         file_paths, _ = QFileDialog.getOpenFileNames(
             self,
             "Select Files to Rename (in order of selected entries)",
@@ -562,29 +576,21 @@ class MainWindow(QWidget):
         if not file_paths:
             return
         
-        # Get database code
         db_code = self._get_database_code()
-        
-        # Sanitize character name
         safe_character = self._sanitize_character_name(rename_character)
         
-        # Process each selected row
         renamed_count = 0
         failed_renames = []
         
         for idx, proxy_index in enumerate(selected_rows):
-            # Get source model index
             source_index = self.table.proxy_model.mapToSource(proxy_index)
             row = source_index.row()
             
-            # Get UFC code from the row
             ufc_item = self.table._model.item(row, 2)
             if not ufc_item:
                 continue
             
             ufc = ufc_item.text()
-            
-            # Get corresponding file (cycle through files if more rows than files)
             file_idx = idx % len(file_paths)
             original_path = file_paths[file_idx]
             
@@ -592,39 +598,21 @@ class MainWindow(QWidget):
                 failed_renames.append((ufc, "File not found"))
                 continue
             
-            # Generate new filename
-            new_path = self._generate_renamed_path(
-                original_path,
-                safe_character,
-                ufc,
-                db_code
-            )
+            new_path = self._generate_renamed_path(original_path, safe_character, ufc, db_code)
             
             try:
-                # Rename the file
                 shutil.move(original_path, new_path)
-                
-                # Update database with new filename
                 new_filename = os.path.basename(new_path)
                 self.database.update_replay(ufc, renamed_filename=new_filename)
-                
                 renamed_count += 1
-                
             except Exception as e:
                 failed_renames.append((ufc, str(e)))
         
-        # Show results
         message = f"Successfully renamed {renamed_count} file(s) using character: {rename_character}"
         if failed_renames:
-            message += f"\n\nFailed to rename {len(failed_renames)} file(s):"
-            for ufc, error in failed_renames[:5]:  # Show first 5 errors
-                message += f"\n  {ufc}: {error}"
-            if len(failed_renames) > 5:
-                message += f"\n  ... and {len(failed_renames) - 5} more"
+            message += f"\n\nFailed: {len(failed_renames)} file(s)"
         
         QMessageBox.information(self, "Rename Complete", message)
-        
-        # Reload table
         self.load_replays()
     
     def _get_database_code(self) -> str:
@@ -640,7 +628,6 @@ class MainWindow(QWidget):
                 if row:
                     return row[0]
                 else:
-                    # Generate and save a new UDC if it doesn't exist
                     import uuid
                     new_udc = str(uuid.uuid4())[:8].upper()
                     c.execute("INSERT INTO db_info (unique_db_code) VALUES (?)", (new_udc,))
@@ -652,30 +639,19 @@ class MainWindow(QWidget):
     
     def _sanitize_character_name(self, name: str) -> str:
         """Sanitize character name for use in filenames."""
-        # Remove invalid filename characters
         safe_name = re.sub(r'[\\/:\*\?\"<>\|]', '_', name)
-        # Convert to lowercase and replace spaces with hyphens
         safe_name = safe_name.lower().replace(" ", "-")
-        # Remove multiple consecutive hyphens
         safe_name = re.sub(r'-+', '-', safe_name)
-        # Strip leading/trailing hyphens
-        safe_name = safe_name.strip('-')
-        return safe_name
+        return safe_name.strip('-')
     
-    def _generate_renamed_path(self, original_path: str, character: str, 
-                               ufc: str, db_code: str) -> str:
+    def _generate_renamed_path(self, original_path: str, character: str, ufc: str, db_code: str) -> str:
         """Generate the new file path with the naming convention."""
         directory = os.path.dirname(original_path)
         extension = os.path.splitext(original_path)[1]
-        
-        # Generate timestamp
         timestamp = datetime.now().strftime("%m-%d-%Y_%H-%M-%S")
-        
-        # Build new filename: character_UFC-XXXX_UDC-YYYY_MM-DD-YYYY_HH-MM-SS.ext
         new_filename = f"{character}_{ufc}_UDC-{db_code}_{timestamp}{extension}"
         new_path = os.path.join(directory, new_filename)
         
-        # Handle duplicates
         counter = 1
         while os.path.exists(new_path):
             new_filename = f"{character}_{ufc}_UDC-{db_code}_{timestamp}_{counter}{extension}"
@@ -689,89 +665,59 @@ class MainWindow(QWidget):
     def choose_alt_characters(self):
         """Show dialog to choose alt characters."""
         current_alts = self.preferences.get_alt_characters()
-        
-        dialog = AltCharacterPickerDialog(
-            self.portrait_manager,
-            current_alts,
-            self
-        )
+        dialog = AltCharacterPickerDialog(self.portrait_manager, current_alts, self)
         
         if dialog.exec():
             selected = dialog.get_selected_characters()
             self.preferences.set_alt_characters(selected)
             self.update_alt_character()
-            
-            QMessageBox.information(
-                self,
-                "Alt Characters Updated",
-                f"Selected {len(selected)} character(s) for rotation."
-            )
+            QMessageBox.information(self, "Alt Characters Updated", 
+                                   f"Selected {len(selected)} character(s) for rotation.")
     
     def choose_main_character(self):
         """Choose main character portrait."""
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select Character Portrait",
-            CHAR_PORTRAIT_DIR,
+            self, "Select Character Portrait", CHAR_PORTRAIT_DIR,
             "Images (*.png *.jpg *.jpeg *.bmp *.gif)"
         )
         
-        if not path:
-            return
-        
-        self.preferences.set('main_character_path', path)
-        
-        char_name = self.portrait_manager.clean_filename(os.path.basename(path))
-        if char_name:
-            self.preferences.set('main_character', char_name)
-        
-        self.update_portraits()
+        if path:
+            self.preferences.set('main_character_path', path)
+            char_name = self.portrait_manager.clean_filename(os.path.basename(path))
+            if char_name:
+                self.preferences.set('main_character', char_name)
+            self.update_portraits()
     
     def choose_rank(self):
         """Choose rank badge."""
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select Rank Badge",
-            RANK_PORTRAIT_DIR,
+            self, "Select Rank Badge", RANK_PORTRAIT_DIR,
             "Images (*.png *.jpg *.jpeg *.bmp *.gif)"
         )
         
-        if not path:
-            return
-        
-        self.preferences.set('rank_badge_path', path)
-        self.update_portraits()
+        if path:
+            self.preferences.set('rank_badge_path', path)
+            self.update_portraits()
     
     def edit_character_name(self):
         """Edit main character name."""
         current_name = self.preferences.get_main_character() or ""
-        
         new_name, ok = QInputDialog.getText(
-            self, "Edit Character Name",
-            "Enter character name:",
-            text=current_name
+            self, "Edit Character Name", "Enter character name:", text=current_name
         )
         
         if ok:
             new_name = new_name.strip()
-            if new_name:
-                self.preferences.set('character_name_override', new_name)
-            else:
-                self.preferences.set('character_name_override', None)
-            
+            self.preferences.set('character_name_override', new_name if new_name else None)
             self.update_portraits()
     
     def show_tag_picker(self):
         """Show tag picker dialog."""
         if not self.database:
-            QMessageBox.warning(
-                self,
-                "No Database",
-                "Please select a database first."
-            )
+            QMessageBox.warning(self, "No Database", "Please select a database first.")
             return
         
-        # Get current tags from input field
         current_tags = self.left_panel.tags_input.text().strip()
-        
         dialog = TagPickerDialog(self.database, current_tags, self)
         
         if dialog.exec():
@@ -782,15 +728,12 @@ class MainWindow(QWidget):
     def toggle_theme(self):
         """Toggle between dark and light theme."""
         current_dark_mode = self.preferences.get('dark_mode', False)
-        new_dark_mode = not current_dark_mode
-        
-        self.preferences.set('dark_mode', new_dark_mode)
+        self.preferences.set('dark_mode', not current_dark_mode)
         self.apply_theme()
     
     def apply_theme(self):
         """Apply the current theme."""
         dark_mode = self.preferences.get('dark_mode', False)
-        
         if not isinstance(dark_mode, bool):
             dark_mode = False
         
@@ -809,17 +752,11 @@ class MainWindow(QWidget):
     
     def update_main_character(self):
         """Update main character display."""
-        from core.constants import PORTRAIT_SIZE_MAIN
-        
         char_path = self.preferences.get('main_character_path')
         char_name = self.preferences.get_main_character() or "Main Character"
         
         if char_path and os.path.exists(char_path):
-            # Use 220x220 to match right panel
-            pixmap = self.portrait_manager.load_portrait(
-                char_path,
-                QSize(220, 220)
-            )
+            pixmap = self.portrait_manager.load_portrait(char_path, QSize(220, 220))
             self.right_panel.update_character(char_name, pixmap)
         else:
             self.right_panel.update_character(char_name, None)
@@ -829,10 +766,7 @@ class MainWindow(QWidget):
         rank_path = self.preferences.get('rank_badge_path')
         
         if rank_path and os.path.exists(rank_path):
-            pixmap = self.portrait_manager.load_portrait(
-                rank_path,
-                QSize(PORTRAIT_SIZE_SMALL, PORTRAIT_SIZE_SMALL)
-            )
+            pixmap = self.portrait_manager.load_portrait(rank_path, QSize(PORTRAIT_SIZE_SMALL, PORTRAIT_SIZE_SMALL))
             self.right_panel.update_rank(pixmap)
         else:
             self.right_panel.update_rank(None)
@@ -858,10 +792,7 @@ class MainWindow(QWidget):
         
         if portraits:
             portrait_path = random.choice(portraits)
-            pixmap = self.portrait_manager.load_portrait(
-                portrait_path,
-                QSize(200, 200)
-            )
+            pixmap = self.portrait_manager.load_portrait(portrait_path, QSize(200, 200))
         else:
             pixmap = None
         
