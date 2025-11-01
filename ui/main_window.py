@@ -35,10 +35,10 @@ from ui.widgets.search_bar import SearchBar
 from ui.themes import ThemeManager
 from ui.dialogs.settings_dialogs import ControlsDialog, AppearanceDialog
 from ui.dialogs.rename_character_dialog import RenameCharacterDialog
-
+from ui.dialogs.filename_character_picker import FilenameCharacterPickerDialog
 from ui.dialogs.filter_dialogs import TagFilterDialog, RecordedFilterDialog
 from ui.dialogs.edit_dialog import EditReplayDialog
-from ui.dialogs.character_dialogs import AltCharacterPickerDialog, NamePickerDialog
+from ui.dialogs.character_dialogs import AltCharacterPickerDialog, TagPickerDialog
 
 
 class MainWindow(QWidget):
@@ -55,13 +55,24 @@ class MainWindow(QWidget):
         self.portrait_manager: PortraitManager = PortraitManager(CHAR_PORTRAIT_DIR, RANK_PORTRAIT_DIR)
         self.quote_manager: QuoteManager = QuoteManager(QUOTES_JSON)
         
-        # Initialize database
+        # Initialize database (but don't show dialog yet)
         self.database: Optional[ReplayDatabase] = None
-        self._init_database()
+        db_path = self.preferences.get('active_db_path')
+        if db_path and os.path.exists(db_path):
+            self.database = ReplayDatabase(db_path)
         
-        # Setup UI
+        # Setup UI FIRST
         self.init_ui()
         self.apply_theme()
+    
+        # Load saved filename character
+        filename_char = self.preferences.get('filename_character')
+        if filename_char:
+            self.left_panel.set_filename_character(filename_char)
+
+        # THEN handle database if needed
+        if not self.database:
+            self._show_database_dialog()
         
         # Load initial data
         self.load_replays()
@@ -69,16 +80,6 @@ class MainWindow(QWidget):
         
         # Setup timers
         self.setup_timers()
-    
-    def _init_database(self):
-        """Initialize database from preferences or prompt user."""
-        db_path = self.preferences.get('active_db_path')
-        
-        if db_path and os.path.exists(db_path):
-            self.database = ReplayDatabase(db_path)
-        else:
-            # Prompt user to select or create database
-            self._show_database_dialog()
     
     def show_controls_dialog(self):
         """Show controls popup dialog."""
@@ -97,6 +98,33 @@ class MainWindow(QWidget):
         dialog.toggle_theme_clicked.connect(self.toggle_theme)
         dialog.exec()
 
+    def show_filename_character_picker(self):
+        """Show dialog to pick character for filename generation."""
+        current_character = self.preferences.get('filename_character', '')
+        
+        dialog = FilenameCharacterPickerDialog(
+            self.portrait_manager,
+            current_character,
+            self
+        )
+        
+        if dialog.exec():
+            selected_character = dialog.get_selected_character()
+            if selected_character:
+                # Save to preferences
+                self.preferences.set('filename_character', selected_character)
+                
+                # Update left panel display
+                self.left_panel.set_filename_character(selected_character)
+                
+                QMessageBox.information(
+                    self,
+                    "Character Set",
+                    f"File name character set to: {selected_character}\n\n"
+                    f"New replays will be named:\n"
+                    f"{selected_character.lower().replace(' ', '-')}_UFC-XXXX_UDC-YYYY_..."
+                )
+
     def init_ui(self):
         """Initialize the user interface with balanced proportions."""
         main_layout = QVBoxLayout(self)
@@ -107,12 +135,15 @@ class MainWindow(QWidget):
         top_layout = QHBoxLayout()
         top_layout.setSpacing(30)
         
-         # Left Panel - UPDATED CONNECTIONS
+        # Left Panel - UPDATED CONNECTIONS
         self.left_panel = LeftPanel()
         self.left_panel.setMinimumWidth(300)
         self.left_panel.setMaximumWidth(420)
         self.left_panel.add_replay_requested.connect(self.on_add_replay)
-        self.left_panel.name_picker_clicked.connect(self.show_name_picker)
+        self.left_panel.tag_picker_clicked.connect(self.show_tag_picker)
+        self.left_panel.filename_character_picker_clicked.connect(self.show_filename_character_picker)  # NEW
+        self.left_panel.controls_clicked.connect(self.show_controls_dialog)
+        self.left_panel.appearance_clicked.connect(self.show_appearance_dialog)
         # NEW: Connect popup dialogs
         self.left_panel.controls_clicked.connect(self.show_controls_dialog)
         self.left_panel.appearance_clicked.connect(self.show_appearance_dialog)
@@ -178,10 +209,56 @@ class MainWindow(QWidget):
             QMessageBox.warning(self, "No Database", "Please select or create a database first.")
             return
         
-        file_name = data.get('file_name', '').strip()
-        if not file_name:
-            QMessageBox.warning(self, "Validation Error", "File Name cannot be empty.")
-            return
+        # Check if filename character is set
+        filename_character = data.get('filename_character')
+        if not filename_character:
+            reply = QMessageBox.question(
+                self,
+                "No File Name Character Set",
+                "No character set for file name. Would you like to set one now?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self.show_filename_character_picker()
+                # Check again after dialog
+                filename_character = self.preferences.get('filename_character')
+                if not filename_character:
+                    return  # User cancelled
+            else:
+                return
+        
+        # Generate the systematic filename
+        import re
+        from datetime import datetime
+        
+        # Sanitize character name
+        safe_char = re.sub(r'[\\/:\*\?\"<>\|]', '_', filename_character)
+        safe_char = safe_char.lower().replace(" ", "-")
+        safe_char = re.sub(r'-+', '-', safe_char).strip('-')
+        
+        # Generate UFC code
+        ufc = f"UFC-{str(__import__('uuid').uuid4())[:4].upper()}"
+        
+        # Get database code
+        try:
+            with __import__('sqlite3').connect(self.database.db_path) as conn:
+                c = conn.cursor()
+                c.execute("SELECT unique_db_code FROM db_info LIMIT 1")
+                row = c.fetchone()
+                if row:
+                    db_code = row[0]
+                else:
+                    db_code = str(__import__('uuid').uuid4())[:8].upper()
+                    c.execute("INSERT INTO db_info (unique_db_code) VALUES (?)", (db_code,))
+                    conn.commit()
+        except:
+            db_code = "UNKNOWN"
+        
+        # Generate timestamp
+        timestamp = datetime.now().strftime("%m-%d-%Y_%H-%M-%S")
+        
+        # Create systematic filename
+        file_name = f"{safe_char}_{ufc}_UDC-{db_code}_{timestamp}"
         
         try:
             self.database.add_replay(
@@ -189,55 +266,19 @@ class MainWindow(QWidget):
                 timestamp=data.get('timestamp', ''),
                 video_link=data.get('video_link', ''),
                 description=data.get('description', ''),
-                tags=""
+                tags=data.get('tags', '')
             )
             
             self.left_panel.clear_inputs()
             self.load_replays()
-            QMessageBox.information(self, "Success", "Replay added successfully!")
+            QMessageBox.information(
+                self, 
+                "Success", 
+                f"Replay added successfully!\n\nFile Name: {file_name}"
+            )
             
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to add replay:\n{str(e)}")
-    
-    def load_replays(self):
-        """Load replays from database into table."""
-        if not self.database:
-            return
-        
-        try:
-            replays = self.database.get_all_replays()
-            self.table.load_replays(replays)
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load replays:\n{str(e)}")
-    
-    def on_recorded_toggled(self, ufc: str, recorded: bool):
-        """Handle recorded checkbox toggle."""
-        if not self.database:
-            return
-        
-        try:
-            self.database.update_replay(ufc, recorded=1 if recorded else 0)
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to update recorded status:\n{str(e)}")
-    
-    def on_row_double_clicked(self, row: int, replay_data: dict):
-        """Handle double-click on table row."""
-        if not self.database:
-            return
-        
-        dialog = EditReplayDialog(replay_data, self.database, self)
-        
-        if dialog.exec():
-            self.load_replays()
-            QMessageBox.information(self, "Success", "Replay updated successfully!")
-    
-    def cleanup_recycle_bin(self):
-        """Auto-cleanup old items from recycle bin."""
-        if self.database:
-            try:
-                self.database.auto_cleanup_recycle_bin(RECYCLE_BIN_AUTO_DELETE_DAYS)
-            except Exception as e:
-                print(f"Recycle bin cleanup failed: {e}")
     
     # ==================== Database Actions ====================
     
@@ -279,7 +320,8 @@ class MainWindow(QWidget):
             db_path = os.path.join(ACTIVE_DB_FOLDER, db_name)
             self.database = ReplayDatabase(db_path)
             self.preferences.set('active_db_path', db_path)
-            self.left_panel.set_active_db(db_name)
+            if hasattr(self, 'left_panel'):  # Check if UI is initialized
+                self.left_panel.set_active_db(db_name)
             self.load_replays()
     
     def _create_new_database(self):
@@ -368,11 +410,15 @@ class MainWindow(QWidget):
             self.current_tag_filter = dialog.get_selected_tags()
             self.use_and_logic = dialog.get_use_and_logic()
             
-            if self.current_tag_filter:
-                self.table.apply_filters(
-                    search_text=self.search_bar.get_text(),
-                    tags=self.current_tag_filter
-                )
+            # Store the logic in the table's proxy model
+            if hasattr(self.table, 'proxy_model'):
+                self.table.proxy_model.use_and_logic = self.use_and_logic
+            
+            # Apply tag filter
+            self.table.apply_filters(
+                search_text=self.search_bar.get_text(),
+                tags=self.current_tag_filter
+            )
     
     def _show_recorded_filter_dialog(self):
         """Show recorded filter dialog."""
@@ -452,13 +498,15 @@ class MainWindow(QWidget):
                     self,
                     "Character Set",
                     f"Rename character set to: {new_character}\n\n"
-                    f"Files will be renamed using this character."
+                    f"Files will be renamed using this character.\n"
+                    f"New replays will show this in the filename preview."
                 )
             else:
                 QMessageBox.information(
                     self,
                     "Character Cleared",
-                    "Rename character has been cleared."
+                    "Rename character has been cleared.\n"
+                    "Please set one before adding replays."
                 )
     
     def rename_selected_files(self):
@@ -711,8 +759,8 @@ class MainWindow(QWidget):
             
             self.update_portraits()
     
-    def show_name_picker(self):
-        """Show name picker dialog."""
+    def show_tag_picker(self):
+        """Show tag picker dialog."""
         if not self.database:
             QMessageBox.warning(
                 self,
@@ -721,12 +769,15 @@ class MainWindow(QWidget):
             )
             return
         
-        dialog = NamePickerDialog(self.database, self)
+        # Get current tags from input field
+        current_tags = self.left_panel.tags_input.text().strip()
+        
+        dialog = TagPickerDialog(self.database, current_tags, self)
         
         if dialog.exec():
-            selected_name = dialog.get_selected_name()
-            if selected_name:
-                self.left_panel.file_name_input.setText(selected_name)
+            selected_tags = dialog.get_selected_tags()
+            if selected_tags:
+                self.left_panel.tags_input.setText(selected_tags)
     
     def toggle_theme(self):
         """Toggle between dark and light theme."""
@@ -804,3 +855,15 @@ class MainWindow(QWidget):
         
         char_name = random.choice(alt_chars)
         portraits = self.portrait_manager.get_character_portraits(char_name)
+        
+        if portraits:
+            portrait_path = random.choice(portraits)
+            pixmap = self.portrait_manager.load_portrait(
+                portrait_path,
+                QSize(200, 200)
+            )
+        else:
+            pixmap = None
+        
+        quote = self.quote_manager.get_random_quote(char_name)
+        self.center_panel.update_display(char_name, pixmap, quote)

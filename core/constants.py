@@ -1,25 +1,26 @@
 """Configuration constants for the application."""
 import os
 
-# Base paths - ADJUST THESE TO YOUR ACTUAL PATHS
-ASSETS_BASE = r"D:\2025\Video Games\Street Fighter 6\RKM\assets"
-CHAR_PORTRAIT_DIR = os.path.join(ASSETS_BASE, "RKM_character_portraits")
-RANK_PORTRAIT_DIR = os.path.join(ASSETS_BASE, "RKM_rank_portraits")
-QUOTES_JSON = os.path.join(ASSETS_BASE, "RKM_character_quotes", "RKM_character_quotes.json")
+# Base paths - UPDATED TO NEW STRUCTURE
+ASSETS_BASE = r"D:\2025\Video Games\Street Fighter 6\RKM_ver2\assets"
+CHAR_PORTRAIT_DIR = os.path.join(ASSETS_BASE, "portraits")
+RANK_PORTRAIT_DIR = os.path.join(ASSETS_BASE, "rank images")
+QUOTES_JSON = os.path.join(ASSETS_BASE, "quotes", "character_quotes.json")
 
-ACTIVE_DB_FOLDER = r"D:\2025\Video Games\Street Fighter 6\RKM\database(s)"
-BACKUP_DB_FOLDER = os.path.join(ACTIVE_DB_FOLDER, "database_backups")
+# Database paths - UPDATED
+ACTIVE_DB_FOLDER = r"D:\2025\Video Games\Street Fighter 6\RKM_ver2\udc"
+BACKUP_DB_FOLDER = r"D:\2025\Video Games\Street Fighter 6\RKM_ver2\udc_backups"
 REPLAY_FOLDER = r"D:\Videos\OBS_recordings"
 PREFERENCES_FILE = os.path.join(ACTIVE_DB_FOLDER, "preferences.json")
 
-# Icons
-ICON_FOLDER = os.path.join(ASSETS_BASE, "RKM_icon(s)", "Dark-Light mode button_icons")
-DARK_MODE_ICON = os.path.join(ICON_FOLDER, "sun(dark)-svgrepo-com.svg")
-LIGHT_MODE_ICON = os.path.join(ICON_FOLDER, "sun(light)(golden-yellow)( #FFC000)-svgrepo-com.svg")
+# Icons (if you have them)
+ICON_FOLDER = os.path.join(ASSETS_BASE, "icons")
+DARK_MODE_ICON = os.path.join(ICON_FOLDER, "sun-dark.svg")
+LIGHT_MODE_ICON = os.path.join(ICON_FOLDER, "sun-light.svg")
 
 # Layout constants
 PORTRAIT_SIZE_SMALL = 160
-PORTRAIT_SIZE_MAIN = 280
+PORTRAIT_SIZE_MAIN = 220
 PORTRAIT_SPACING = 12
 TOP_BAND_PADDING = 8
 ADD_REPLAY_INPUT_WIDTH = 350

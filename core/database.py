@@ -1,4 +1,4 @@
-"""Database operations for replay management."""
+"""Database operations for replay management with auto-migration."""
 import sqlite3
 import uuid
 from datetime import datetime, timedelta
@@ -12,6 +12,7 @@ class ReplayDatabase:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self._initialize_db()
+        self._migrate_db()  # NEW: Auto-migrate old databases
     
     def _initialize_db(self):
         """Initialize database with required tables."""
@@ -62,6 +63,33 @@ class ReplayDatabase:
             
             conn.commit()
     
+    def _migrate_db(self):
+        """Migrate old databases by adding missing columns."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                c = conn.cursor()
+                
+                # Check and add 'tags' column to replays if missing
+                c.execute("PRAGMA table_info(replays)")
+                columns = [col[1] for col in c.fetchall()]
+                
+                if 'tags' not in columns:
+                    print(f"📦 Migrating database: Adding 'tags' column...")
+                    c.execute("ALTER TABLE replays ADD COLUMN tags TEXT")
+                    conn.commit()
+                    print("✅ Migration complete!")
+                
+                # Check and add 'tags' column to recycle_bin if missing
+                c.execute("PRAGMA table_info(recycle_bin)")
+                columns = [col[1] for col in c.fetchall()]
+                
+                if 'tags' not in columns:
+                    c.execute("ALTER TABLE recycle_bin ADD COLUMN tags TEXT")
+                    conn.commit()
+                
+        except Exception as e:
+            print(f"⚠️ Migration warning: {e}")
+    
     def add_replay(self, file_name: str, timestamp: str = "", 
                    video_link: str = "", description: str = "",
                    tags: str = "") -> str:
@@ -109,7 +137,7 @@ class ReplayDatabase:
     def update_replay(self, ufc: str, **kwargs):
         """Update a replay entry."""
         valid_fields = ['file_name', 'timestamp', 'video_link', 
-                       'extended_desc', 'recorded', 'tags']
+                       'extended_desc', 'recorded', 'tags', 'renamed_filename']
         
         updates = []
         values = []
@@ -175,16 +203,21 @@ class ReplayDatabase:
         """Get all unique tags from the database."""
         tags = set()
         
-        with sqlite3.connect(self.db_path) as conn:
-            c = conn.cursor()
-            c.execute("SELECT tags FROM replays WHERE tags IS NOT NULL AND tags != ''")
-            rows = c.fetchall()
-        
-        for (tag_str,) in rows:
-            for tag in tag_str.split(','):
-                tag = tag.strip()
-                if tag:
-                    tags.add(tag)
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                c = conn.cursor()
+                c.execute("SELECT tags FROM replays WHERE tags IS NOT NULL AND tags != ''")
+                rows = c.fetchall()
+            
+            for (tag_str,) in rows:
+                for tag in tag_str.split(','):
+                    tag = tag.strip()
+                    if tag:
+                        tags.add(tag)
+        except sqlite3.OperationalError as e:
+            # Column might not exist in old database
+            print(f"⚠️ Warning: {e}")
+            return []
         
         return sorted(tags)
     

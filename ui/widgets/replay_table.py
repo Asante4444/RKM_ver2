@@ -1,4 +1,4 @@
-"""Custom replay table widget - TYPE-SAFE VERSION."""
+"""Custom replay table widget - FIXED TEXT WRAPPING."""
 from PyQt6.QtWidgets import (
     QTableView, QHeaderView, QAbstractItemView, QStyledItemDelegate,
     QStyleOptionViewItem, QStyle, QApplication, QWidget
@@ -11,78 +11,32 @@ from PyQt6.QtCore import Qt, QSortFilterProxyModel, QSize, pyqtSignal, QModelInd
 from typing import Any, Optional
 
 
-class TextWrapDelegate(QStyledItemDelegate):
-    """Delegate for text wrapping in table cells."""
+class ElidedTextDelegate(QStyledItemDelegate):
+    """Delegate that elides (truncates with ...) long text instead of wrapping."""
     
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex):
+        """Paint text with elision for long content."""
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
         
-        painter.save()
-        doc = QTextDocument()
-        doc.setDefaultFont(opt.font)
-        doc.setPlainText(opt.text)
-        
-        text_width = max(1, opt.rect.width())
-        doc.setTextWidth(text_width)
-        
-        opt.text = ""
         style = QApplication.style()
-        if style:  # Type-safe check
+        if style:
             style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter)
-        
-        painter.translate(opt.rect.x(), opt.rect.y())
-        ctx = QAbstractTextDocumentLayout.PaintContext()
-        
-        if opt.state & QStyle.StateFlag.State_Selected:
-            ctx.palette.setColor(
-                QPalette.ColorRole.Text,
-                opt.palette.color(QPalette.ColorRole.HighlightedText)
-            )
-        
-        layout = doc.documentLayout()
-        if layout:  # Type-safe check
-            layout.draw(painter, ctx)
-        painter.restore()
     
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
-        opt = QStyleOptionViewItem(option)
-        self.initStyleOption(opt, index)
-        
-        doc = QTextDocument()
-        doc.setDefaultFont(opt.font)
-        doc.setPlainText(opt.text)
-        
-        width = opt.rect.width()
-        widget = option.widget
-        
-        if (not width or width <= 0) and widget:
-            try:
-                # Type-safe widget check
-                if isinstance(widget, QTableView):
-                    width = widget.columnWidth(index.column())
-                else:
-                    width = 200
-            except:
-                width = 200
-        
-        if not width or width <= 0:
-            width = 200
-        
-        doc.setTextWidth(max(1, width))
-        height = int(doc.size().height()) + 6
-        
-        return QSize(int(width), min(height, 200))
+        """Return fixed height for rows."""
+        return QSize(option.rect.width(), 40)  # Fixed row height
 
 
 class ReplaySortFilterProxy(QSortFilterProxyModel):
-    """Custom proxy model for filtering and sorting replays."""
+    """Custom proxy model for filtering and sorting replays with AND/OR tag logic."""
     
     def __init__(self):
         super().__init__()
         self.search_text = ""
         self.tag_filters: list[str] = []
         self.recorded_filter: Optional[bool] = None
+        self.use_and_logic: bool = False
     
     def setSearchText(self, text: str):
         """Set search text filter."""
@@ -107,7 +61,7 @@ class ReplaySortFilterProxy(QSortFilterProxyModel):
         
         # Get data from columns with type-safe checks
         file_name_item = model.item(source_row, 0)
-        desc_item = model.item(source_row, 4)
+        desc_item = model.item(source_row, 5)
         tags_item = model.item(source_row, 7)
         recorded_item = model.item(source_row, 3)
         
@@ -126,11 +80,18 @@ class ReplaySortFilterProxy(QSortFilterProxyModel):
                    self.search_text in tags):
                 return False
         
-        # Tag filter
+        # Tag filter with AND/OR logic
         if self.tag_filters:
-            tag_list = [t.strip() for t in tags.split(',')]
-            if not any(ft in tag_list for ft in self.tag_filters):
-                return False
+            tag_list = [t.strip().lower() for t in tags.split(',') if t.strip()]
+            
+            if self.use_and_logic:
+                # AND logic: replay must have ALL selected tags
+                if not all(ft in tag_list for ft in self.tag_filters):
+                    return False
+            else:
+                # OR logic: replay must have at least ONE selected tag
+                if not any(ft in tag_list for ft in self.tag_filters):
+                    return False
         
         # Recorded filter
         if self.recorded_filter is not None:
@@ -171,22 +132,36 @@ class ReplayTable(QTableView):
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.setSortingEnabled(True)
-        self.setWordWrap(True)
+        self.setWordWrap(False)  # DISABLE word wrap
         
         # Header settings with type-safe checks
         v_header = self.verticalHeader()
         if v_header:
-            v_header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+            v_header.setDefaultSectionSize(40)  # Fixed row height
+            v_header.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         
         h_header = self.horizontalHeader()
         if h_header:
             h_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-            h_header.setStretchLastSection(True)
+            h_header.setStretchLastSection(False)  # Don't stretch last column
         
-        # Text wrap delegates
-        self.wrap_delegate = TextWrapDelegate()
-        self.setItemDelegateForColumn(0, self.wrap_delegate)
-        self.setItemDelegateForColumn(5, self.wrap_delegate)
+        # Use elided text delegate for all columns
+        self.elided_delegate = ElidedTextDelegate()
+        for col in range(8):
+            self.setItemDelegateForColumn(col, self.elided_delegate)
+        
+        # Set column widths
+        self.setColumnWidth(0, 150)  # File Name
+        self.setColumnWidth(1, 80)   # Timestamp
+        self.setColumnWidth(2, 100)  # UFC
+        self.setColumnWidth(3, 80)   # Recorded
+        self.setColumnWidth(4, 250)  # Video Link
+        self.setColumnWidth(5, 200)  # Description
+        self.setColumnWidth(6, 140)  # Date Added
+        self.setColumnWidth(7, 150)  # Tags
+        
+        # Set tooltips to show full text on hover
+        self.setMouseTracking(True)
         
         # Connect signals
         self.doubleClicked.connect(self._on_double_click)
@@ -202,6 +177,7 @@ class ReplayTable(QTableView):
             # File Name
             item = QStandardItem(replay.get('file_name', ''))
             item.setEditable(False)
+            item.setToolTip(replay.get('file_name', ''))  # Full text on hover
             items.append(item)
             
             # Timestamp
@@ -226,11 +202,14 @@ class ReplayTable(QTableView):
             # Video Link
             item = QStandardItem(replay.get('video_link', ''))
             item.setEditable(False)
+            item.setToolTip(replay.get('video_link', ''))  # Full text on hover
             items.append(item)
             
-            # Description
-            item = QStandardItem(replay.get('description', ''))
+            # Description - truncate if too long
+            desc = replay.get('description', '')
+            item = QStandardItem(desc)
             item.setEditable(False)
+            item.setToolTip(desc)  # Full text on hover
             items.append(item)
             
             # Date Added
@@ -239,16 +218,18 @@ class ReplayTable(QTableView):
             items.append(item)
             
             # Tags
-            item = QStandardItem(replay.get('tags', ''))
+            tags = replay.get('tags', '')
+            item = QStandardItem(tags)
             item.setEditable(False)
+            item.setToolTip(tags)  # Full text on hover
             items.append(item)
             
             self._model.appendRow(items)
         
-        self.resizeColumnsToContents()
+        # Don't resize columns to contents - keep fixed widths
     
     def _on_double_click(self, index: QModelIndex):
-        """Handle double-click on row."""
+        """Handle double-click on row to edit."""
         source_index = self.proxy_model.mapToSource(index)
         row = source_index.row()
         
@@ -259,13 +240,13 @@ class ReplayTable(QTableView):
             return item.text() if item else ''
         
         replay_data = {
-            'file_name': safe_text(row, 0),      # ✅ SAFE
-            'timestamp': safe_text(row, 1),      # ✅ SAFE
-            'ufc': safe_text(row, 2),            # ✅ SAFE
-            'video_link': safe_text(row, 4),     # ✅ SAFE
-            'description': safe_text(row, 5),    # ✅ SAFE
-            'date_added': safe_text(row, 6),     # ✅ SAFE
-            'tags': safe_text(row, 7)            # ✅ SAFE
+            'file_name': safe_text(row, 0),
+            'timestamp': safe_text(row, 1),
+            'ufc': safe_text(row, 2),
+            'video_link': safe_text(row, 4),
+            'description': safe_text(row, 5),
+            'date_added': safe_text(row, 6),
+            'tags': safe_text(row, 7)
         }
         
         self.row_double_clicked.emit(row, replay_data)

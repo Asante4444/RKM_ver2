@@ -1,4 +1,4 @@
-"""Character selection dialogs."""
+"""Character selection dialogs and Tag Picker."""
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
     QDialogButtonBox, QLabel, QLineEdit, QCheckBox, QPushButton
@@ -175,16 +175,17 @@ class AltCharacterPickerDialog(QDialog):
                 if checkbox.isChecked()]
 
 
-class NamePickerDialog(QDialog):
-    """Dialog for picking/building replay names from existing tags."""
+class TagPickerDialog(QDialog):
+    """Dialog for picking/building tags from existing tags in database."""
     
-    def __init__(self, database, parent=None):
+    def __init__(self, database, current_tags: str = "", parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Name Picker")
-        self.resize(400, 500)
+        self.setWindowTitle("Tag Picker")
+        self.resize(450, 550)
         
         self.database = database
-        self.selected_name = ""
+        self.current_tags = current_tags
+        self.selected_tags = []
         
         self.init_ui()
     
@@ -194,8 +195,8 @@ class NamePickerDialog(QDialog):
         
         # Instructions
         instruction_label = QLabel(
-            "Select one or more tags to build a replay name.\n"
-            "Hold Ctrl to select multiple tags."
+            "Select one or more tags to add to your replay.\n"
+            "Hold Ctrl to select multiple tags, or double-click for single selection."
         )
         instruction_label.setWordWrap(True)
         layout.addWidget(instruction_label)
@@ -213,7 +214,7 @@ class NamePickerDialog(QDialog):
         all_tags = self.database.get_all_tags() if self.database else []
         
         if not all_tags:
-            no_tags_label = QLabel("No tags found in database.")
+            no_tags_label = QLabel("No tags found in database. Enter new tags below.")
             no_tags_label.setStyleSheet("color: gray; font-style: italic;")
             layout.addWidget(no_tags_label)
         else:
@@ -222,29 +223,54 @@ class NamePickerDialog(QDialog):
             self.list_widget.setSelectionMode(
                 QListWidget.SelectionMode.ExtendedSelection
             )
+            self.list_widget.setMaximumHeight(300)
             
             for tag in all_tags:
                 item = QListWidgetItem(tag)
                 self.list_widget.addItem(item)
             
             self.list_widget.itemDoubleClicked.connect(self._on_double_click)
+            self.list_widget.itemSelectionChanged.connect(self._update_preview)
             
             layout.addWidget(self.list_widget)
             
-            # Preview
-            preview_layout = QVBoxLayout()
-            preview_layout.addWidget(QLabel("Preview:"))
-            self.preview_label = QLabel("")
-            self.preview_label.setStyleSheet(
-                "border: 1px solid gray; padding: 5px; "
-                "background-color: #f0f0f0; font-weight: bold;"
-            )
-            self.preview_label.setMinimumHeight(30)
-            preview_layout.addWidget(self.preview_label)
-            layout.addLayout(preview_layout)
+            # Select buttons
+            button_layout = QHBoxLayout()
             
-            # Update preview when selection changes
-            self.list_widget.itemSelectionChanged.connect(self._update_preview)
+            btn_select_all = QPushButton("Select All")
+            btn_select_all.clicked.connect(self._select_all)
+            button_layout.addWidget(btn_select_all)
+            
+            btn_clear_selection = QPushButton("Clear Selection")
+            btn_clear_selection.clicked.connect(self._clear_selection)
+            button_layout.addWidget(btn_clear_selection)
+            
+            layout.addLayout(button_layout)
+        
+        # New tag input
+        new_tag_layout = QVBoxLayout()
+        new_tag_layout.addWidget(QLabel("Or add new tag(s):"))
+        self.new_tag_input = QLineEdit()
+        self.new_tag_input.setPlaceholderText("Enter new tag(s), separate with commas")
+        self.new_tag_input.textChanged.connect(self._update_preview)
+        new_tag_layout.addWidget(self.new_tag_input)
+        layout.addLayout(new_tag_layout)
+        
+        # Preview
+        preview_layout = QVBoxLayout()
+        preview_layout.addWidget(QLabel("Preview:"))
+        self.preview_label = QLabel("")
+        self.preview_label.setStyleSheet(
+            "border: 1px solid gray; padding: 8px; "
+            "background-color: #f0f0f0; font-weight: bold; min-height: 30px;"
+        )
+        self.preview_label.setWordWrap(True)
+        preview_layout.addWidget(self.preview_label)
+        layout.addLayout(preview_layout)
+        
+        # Update preview with current tags
+        if self.current_tags:
+            self.preview_label.setText(self.current_tags)
         
         layout.addSpacing(10)
         
@@ -266,42 +292,73 @@ class NamePickerDialog(QDialog):
         
         for i in range(self.list_widget.count()):
             item = self.list_widget.item(i)
-            if item:  # ✅ TYPE-SAFE CHECK ADDED
+            if item:
                 if search_lower in item.text().lower():
                     item.setHidden(False)
                 else:
                     item.setHidden(True)
     
-    def _update_preview(self):
-        """Update the preview label with selected tags."""
+    def _select_all(self):
+        """Select all visible tags."""
         if not hasattr(self, 'list_widget'):
             return
         
-        selected_items = self.list_widget.selectedItems()
-        if selected_items:
-            tags = [item.text() for item in selected_items]
-            self.preview_label.setText("+".join(tags))
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if item and not item.isHidden():
+                item.setSelected(True)
+        
+        self._update_preview()
+    
+    def _clear_selection(self):
+        """Clear all selected tags."""
+        if not hasattr(self, 'list_widget'):
+            return
+        
+        self.list_widget.clearSelection()
+        self._update_preview()
+    
+    def _update_preview(self):
+        """Update the preview label with selected tags."""
+        tags = []
+        
+        # Get selected tags from list
+        if hasattr(self, 'list_widget'):
+            selected_items = self.list_widget.selectedItems()
+            tags.extend([item.text() for item in selected_items])
+        
+        # Get new tags from input
+        new_tags = self.new_tag_input.text().strip()
+        if new_tags:
+            tags.extend([t.strip() for t in new_tags.split(',') if t.strip()])
+        
+        if tags:
+            self.preview_label.setText(", ".join(tags))
         else:
             self.preview_label.setText("")
     
     def _on_double_click(self, item):
         """Handle double-click to instantly select single tag."""
-        self.selected_name = item.text()
+        self.selected_tags = [item.text()]
         self.accept()
     
     def _on_accept(self):
-        """Build the selected name from multiple tags."""
-        if not hasattr(self, 'list_widget'):
-            self.accept()
-            return
+        """Build the selected tags from multiple sources."""
+        tags = []
         
-        selected_items = self.list_widget.selectedItems()
-        if selected_items:
-            tags = [item.text() for item in selected_items]
-            self.selected_name = "+".join(tags)
+        # Get selected tags from list
+        if hasattr(self, 'list_widget'):
+            selected_items = self.list_widget.selectedItems()
+            tags.extend([item.text() for item in selected_items])
         
+        # Get new tags from input
+        new_tags = self.new_tag_input.text().strip()
+        if new_tags:
+            tags.extend([t.strip() for t in new_tags.split(',') if t.strip()])
+        
+        self.selected_tags = tags
         self.accept()
     
-    def get_selected_name(self):
-        """Get the selected/built name."""
-        return self.selected_name
+    def get_selected_tags(self):
+        """Get the selected/built tags as comma-separated string."""
+        return ", ".join(self.selected_tags) if self.selected_tags else ""

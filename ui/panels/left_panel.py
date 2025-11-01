@@ -1,4 +1,4 @@
-"""Compact left panel with popup buttons."""
+"""Compact left panel with character-based filename generation."""
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit,
     QPushButton, QTextEdit, QLabel, QGroupBox
@@ -11,13 +11,15 @@ class LeftPanel(QWidget):
     
     # Signals
     add_replay_requested = pyqtSignal(dict)
-    name_picker_clicked = pyqtSignal()
+    tag_picker_clicked = pyqtSignal()
+    filename_character_picker_clicked = pyqtSignal()  # NEW
     controls_clicked = pyqtSignal()
     appearance_clicked = pyqtSignal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMaximumWidth(420)
+        self.filename_character = None  # Persistent character choice
         self.init_ui()
     
     def init_ui(self):
@@ -35,26 +37,46 @@ class LeftPanel(QWidget):
         form_layout.setSpacing(10)
         form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         
-        # File Name with Name Picker
-        name_row = QHBoxLayout()
-        self.file_name_input = QLineEdit()
-        self.file_name_input.setPlaceholderText("Enter File Name")
-        self.name_picker_btn = QPushButton("Name Picker")
-        self.name_picker_btn.setMaximumWidth(110)
-        self.name_picker_btn.clicked.connect(self.name_picker_clicked.emit)
-        name_row.addWidget(self.file_name_input)
-        name_row.addWidget(self.name_picker_btn)
-        form_layout.addRow("File Name:", name_row)
+        # Set File Name (Character Picker)
+        filename_row = QHBoxLayout()
+        self.filename_display = QLabel("No character set")
+        self.filename_display.setStyleSheet("""
+            QLabel {
+                border: 1px solid #888;
+                padding: 6px;
+                background-color: #f5f5f5;
+                color: #666;
+                font-size: 9pt;
+            }
+        """)
+        self.filename_display.setMinimumHeight(30)
+        self.filename_picker_btn = QPushButton("Set File Name")
+        self.filename_picker_btn.setMaximumWidth(120)
+        self.filename_picker_btn.clicked.connect(self.filename_character_picker_clicked.emit)
+        filename_row.addWidget(self.filename_display)
+        filename_row.addWidget(self.filename_picker_btn)
+        form_layout.addRow("File Name:", filename_row)
+        
+        # Tags with Tag Picker
+        tags_row = QHBoxLayout()
+        self.tags_input = QLineEdit()
+        self.tags_input.setPlaceholderText("Separate tags with commas")
+        self.tag_picker_btn = QPushButton("Tag Picker")
+        self.tag_picker_btn.setMaximumWidth(110)
+        self.tag_picker_btn.clicked.connect(self.tag_picker_clicked.emit)
+        tags_row.addWidget(self.tags_input)
+        tags_row.addWidget(self.tag_picker_btn)
+        form_layout.addRow("Tags:", tags_row)
         
         # Timestamp
         self.timestamp_input = QLineEdit()
         self.timestamp_input.setPlaceholderText("e.g., 01:23")
         form_layout.addRow("Timestamp:", self.timestamp_input)
         
-        # Description (MORE SPACE)
+        # Description
         self.description_input = QTextEdit()
         self.description_input.setPlaceholderText("Description (optional)")
-        self.description_input.setMinimumHeight(80)  # More room!
+        self.description_input.setMinimumHeight(80)
         self.description_input.setMaximumHeight(120)
         form_layout.addRow("Description:", self.description_input)
         
@@ -108,10 +130,42 @@ class LeftPanel(QWidget):
         
         layout.addStretch()
     
+    def set_filename_character(self, character: str):
+        """Set the character for filename generation."""
+        self.filename_character = character
+        self.update_filename_display()
+    
+    def update_filename_display(self):
+        """Update the filename display label."""
+        if self.filename_character:
+            self.filename_display.setText(f"Character: {self.filename_character}")
+            self.filename_display.setStyleSheet("""
+                QLabel {
+                    border: 1px solid #4caf50;
+                    padding: 6px;
+                    background-color: #e8f5e9;
+                    color: #1b5e20;
+                    font-weight: bold;
+                    font-size: 9pt;
+                }
+            """)
+        else:
+            self.filename_display.setText("⚠️ No character set - click 'Set File Name'")
+            self.filename_display.setStyleSheet("""
+                QLabel {
+                    border: 1px solid #ff9800;
+                    padding: 6px;
+                    background-color: #fff3e0;
+                    color: #e65100;
+                    font-size: 9pt;
+                }
+            """)
+    
     def _on_add_clicked(self):
         """Handle add replay button click."""
         data = {
-            'file_name': self.file_name_input.text().strip(),
+            'filename_character': self.filename_character,  # NEW: Pass character
+            'tags': self.tags_input.text().strip(),
             'timestamp': self.timestamp_input.text().strip(),
             'description': self.description_input.toPlainText().strip(),
             'video_link': self.video_link_input.text().strip()
@@ -119,11 +173,12 @@ class LeftPanel(QWidget):
         self.add_replay_requested.emit(data)
     
     def clear_inputs(self):
-        """Clear all input fields."""
-        self.file_name_input.clear()
+        """Clear all input fields except filename character (persists)."""
+        self.tags_input.clear()
         self.timestamp_input.clear()
         self.description_input.clear()
         self.video_link_input.clear()
+        # Don't clear filename_character - it persists
     
     def set_active_db(self, db_name: str):
         """Update the active database label."""

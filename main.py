@@ -348,7 +348,7 @@ class ThemeManager:
 
 
 # ==================== CHECKLIST: What You Should Have Now ====================
-"""
+r"""
 PROJECT STRUCTURE CHECKLIST:
 ============================
 
